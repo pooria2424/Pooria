@@ -1,309 +1,308 @@
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
-
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
 
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
-  >
+  />
 
   <title>Telegram MTProto Userbot</title>
 
   <style>
-
     * {
       box-sizing: border-box;
     }
 
     body {
       margin: 0;
-      background: #0b1020;
-      color: #ffffff;
+      min-height: 100vh;
       font-family: Tahoma, Arial, sans-serif;
+      background: #0f172a;
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
     }
 
     .container {
-      max-width: 850px;
-      margin: auto;
-      padding: 25px;
+      width: 100%;
+      max-width: 520px;
     }
 
     .card {
-      background: #121a2d;
-      border: 1px solid #26324d;
+      background: #1e293b;
       border-radius: 18px;
-      padding: 20px;
-      margin-bottom: 18px;
+      padding: 25px;
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.35);
     }
 
     h1 {
       margin-top: 0;
-      font-size: 23px;
-    }
-
-    h2 {
-      font-size: 18px;
+      text-align: center;
+      font-size: 24px;
     }
 
     .description {
-      color: #aab6ce;
-      line-height: 2;
-      font-size: 13px;
+      text-align: center;
+      color: #94a3b8;
+      font-size: 14px;
+      line-height: 1.8;
+      margin-bottom: 25px;
     }
 
     label {
       display: block;
-      margin-top: 15px;
       margin-bottom: 7px;
-      color: #b9c5dd;
-      font-size: 13px;
-    }
-
-    input,
-    textarea,
-    button {
-      width: 100%;
-      border-radius: 12px;
-      border: 1px solid #303c59;
-      padding: 12px;
-      background: #0d1425;
-      color: white;
-      font-family: inherit;
+      color: #cbd5e1;
       font-size: 14px;
     }
 
-    textarea {
-      min-height: 100px;
-      resize: vertical;
+    input {
+      width: 100%;
+      padding: 13px;
+      margin-bottom: 15px;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: #0f172a;
+      color: #fff;
+      outline: none;
+      font-size: 14px;
+      direction: ltr;
+      text-align: left;
+    }
+
+    input:focus {
+      border-color: #38bdf8;
     }
 
     button {
-      margin-top: 14px;
-      background: #246bfd;
-      border: none;
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      padding: 14px;
+      font-size: 15px;
       cursor: pointer;
-      font-weight: bold;
+      margin-top: 5px;
     }
 
-    button:hover {
-      opacity: .9;
+    #loginBtn {
+      background: #229ed9;
+      color: white;
     }
 
-    .danger {
-      background: #a83246;
+    #loginBtn:hover {
+      opacity: 0.9;
+    }
+
+    #logoutBtn {
+      background: #ef4444;
+      color: white;
     }
 
     .status {
-      margin-top: 15px;
-      background: #0d1425;
-      border-radius: 12px;
+      margin-top: 18px;
       padding: 12px;
-      line-height: 1.9;
-      white-space: pre-wrap;
+      border-radius: 10px;
+      background: #0f172a;
+      color: #cbd5e1;
+      font-size: 13px;
+      line-height: 1.7;
+      word-break: break-word;
     }
 
-    .hidden {
+    .success {
+      border: 1px solid #22c55e;
+      color: #86efac;
+    }
+
+    .error {
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+    }
+
+    .loading {
+      border: 1px solid #38bdf8;
+      color: #7dd3fc;
+    }
+
+    #botPanel {
       display: none;
     }
 
-    code {
-      background: #080d19;
-      padding: 3px 7px;
-      border-radius: 6px;
+    .panel-box {
+      background: #0f172a;
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 18px;
+      line-height: 1.9;
+    }
+
+    .panel-box strong {
+      color: #38bdf8;
     }
 
     .commands {
-      line-height: 2.2;
-      color: #cbd5e9;
+      direction: ltr;
+      text-align: left;
+      background: #020617;
+      padding: 12px;
+      border-radius: 10px;
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 2;
+      overflow-x: auto;
     }
 
+    .warning {
+      color: #fbbf24;
+      font-size: 12px;
+      line-height: 1.8;
+    }
   </style>
-
 </head>
 
 <body>
 
-<div class="container">
+  <div class="container">
 
-  <div class="card">
+    <!-- LOGIN -->
+    <div
+      class="card"
+      id="loginSection"
+    >
 
-    <h1>
-      Telegram MTProto Userbot
-    </h1>
+      <h1>
+        Telegram MTProto Userbot
+      </h1>
 
-    <div class="description">
+      <div class="description">
+        ورود به حساب تلگرام و اجرای
+        ارسال خودکار پیام در گروه‌ها
+      </div>
 
-      ورود مستقیم به اکانت تلگرام با MTProto.
+      <label for="apiId">
+        API ID
+      </label>
 
-      <br>
+      <input
+        id="apiId"
+        type="number"
+        placeholder="API ID"
+        autocomplete="off"
+      />
 
-      Session در مرورگر خودت ذخیره می‌شود.
+      <label for="apiHash">
+        API Hash
+      </label>
 
-      <br>
+      <input
+        id="apiHash"
+        type="text"
+        placeholder="API Hash"
+        autocomplete="off"
+      />
 
-      برای اجرای ارسال‌های زمان‌بندی‌شده،
-      این صفحه باید باز بماند.
+      <label for="phone">
+        شماره تلفن
+      </label>
+
+      <input
+        id="phone"
+        type="text"
+        placeholder="+989xxxxxxxxx"
+        autocomplete="off"
+      />
+
+      <label for="session">
+        Session String
+      </label>
+
+      <input
+        id="session"
+        type="text"
+        placeholder="در صورت داشتن Session"
+        autocomplete="off"
+      />
+
+      <button
+        id="loginBtn"
+        type="button"
+      >
+        ورود به تلگرام
+      </button>
+
+      <div
+        id="status"
+        class="status"
+      >
+        آماده ورود
+      </div>
+
+    </div>
+
+
+    <!-- USERBOT PANEL -->
+    <div
+      class="card"
+      id="botPanel"
+    >
+
+      <h1>
+        Userbot فعال است
+      </h1>
+
+      <div class="panel-box">
+
+        <strong>
+          دستورات:
+        </strong>
+
+        <div class="commands">
+word=میو time=4 on
+
+word=هی time=2 edit
+
+word off
+
+.list
+
+.stopall
+        </div>
+
+      </div>
+
+      <div class="panel-box">
+
+        <strong>
+          وضعیت:
+        </strong>
+
+        <div>
+          اتصال به تلگرام برقرار است.
+        </div>
+
+      </div>
+
+      <div class="warning">
+        ⚠️ برای اجرای زمان‌بندی‌ها باید
+        صفحه و اتصال تلگرام فعال بماند.
+      </div>
+
+      <br />
+
+      <button
+        id="logoutBtn"
+        type="button"
+      >
+        خروج از تلگرام
+      </button>
 
     </div>
 
   </div>
-
-
-  <!-- LOGIN -->
-
-  <div class="card" id="loginBox">
-
-    <h2>
-      ورود به اکانت
-    </h2>
-
-    <label>
-      API ID
-    </label>
-
-    <input
-      id="apiId"
-      type="number"
-      placeholder="12345678"
-    >
-
-
-    <label>
-      API Hash
-    </label>
-
-    <input
-      id="apiHash"
-      type="text"
-      placeholder="API Hash"
-    >
-
-
-    <label>
-      شماره تلفن
-    </label>
-
-    <input
-      id="phone"
-      type="text"
-      placeholder="+98912xxxxxxx"
-    >
-
-
-    <label>
-      Session String اختیاری
-    </label>
-
-    <textarea
-      id="session"
-      placeholder="اگر Session String داری اینجا وارد کن"
-    ></textarea>
-
-
-    <button id="loginButton">
-      ورود به تلگرام
-    </button>
-
-
-    <button
-      id="logoutButton"
-      class="danger"
-    >
-      پاک کردن Session
-    </button>
-
-
-    <div
-      id="loginStatus"
-      class="status"
-    >
-      آماده ورود
-    </div>
-
-  </div>
-
-
-  <!-- USERBOT -->
-
-  <div
-    class="card hidden"
-    id="botBox"
-  >
-
-    <h2>
-      Userbot فعال است
-    </h2>
-
-    <div
-      id="accountInfo"
-      class="status"
-    ></div>
-
-
-    <h3>
-      آموزش
-    </h3>
-
-    <div class="commands">
-
-      <p>
-        فعال کردن:
-        <br>
-
-        <code>
-          word=سلام time=4 on
-        </code>
-      </p>
-
-
-      <p>
-        خاموش کردن:
-        <br>
-
-        <code>
-          Word off
-        </code>
-      </p>
-
-
-      <p>
-        تغییر متن و زمان:
-        <br>
-
-        <code>
-          word=هی time=2 edit
-        </code>
-      </p>
-
-
-      <p>
-        نمایش لیست در Saved Messages:
-        <br>
-
-        <code>
-          .list
-        </code>
-      </p>
-
-    </div>
-
-
-    <div
-      id="runtimeStatus"
-      class="status"
-    >
-      Userbot در حال اجرا...
-    </div>
-
-  </div>
-
-</div>
-
-
-<script src="app.js"></script>
 
 </body>
-
 </html>
