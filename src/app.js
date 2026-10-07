@@ -34,10 +34,15 @@ const statusEl = $("status");
 // STORAGE
 // ======================================================
 
+// API اطلاعات عمومی این تب‌ها می‌توانند مشترک باشند.
+// Session و Schedule فقط مخصوص همان Tab هستند.
+
 const STORAGE = {
   apiId: "tg_api_id",
   apiHash: "tg_api_hash",
   phone: "tg_phone",
+
+  // SESSION STORAGE
   session: "tg_session",
   schedules: "tg_schedules"
 };
@@ -49,7 +54,9 @@ const STORAGE = {
 function log(message, type = "info") {
   console.log("[USERBOT]", message);
 
-  if (!statusEl) return;
+  if (!statusEl) {
+    return;
+  }
 
   const color =
     type === "error"
@@ -88,13 +95,43 @@ function clearStatus() {
 }
 
 // ======================================================
+// SESSION / TAB INFO
+// ======================================================
+
+function getTabId() {
+  let tabId =
+    sessionStorage.getItem(
+      "tg_tab_id"
+    );
+
+  if (!tabId) {
+    tabId =
+      crypto.randomUUID();
+
+    sessionStorage.setItem(
+      "tg_tab_id",
+      tabId
+    );
+  }
+
+  return tabId;
+}
+
+const TAB_ID = getTabId();
+
+console.log(
+  "[USERBOT] TAB ID:",
+  TAB_ID
+);
+
+// ======================================================
 // STORAGE FUNCTIONS
 // ======================================================
 
 function loadSchedules() {
   try {
     return JSON.parse(
-      localStorage.getItem(
+      sessionStorage.getItem(
         STORAGE.schedules
       ) || "{}"
     );
@@ -109,7 +146,7 @@ function loadSchedules() {
 }
 
 function saveSchedules(data) {
-  localStorage.setItem(
+  sessionStorage.setItem(
     STORAGE.schedules,
     JSON.stringify(data)
   );
@@ -158,35 +195,46 @@ function removeSchedule(chatId) {
 
 function loadInputs() {
   try {
+
+    // API ID
     if (apiIdInput) {
+
       apiIdInput.value =
         localStorage.getItem(
           STORAGE.apiId
         ) || "";
     }
 
+    // API HASH
     if (apiHashInput) {
+
       apiHashInput.value =
         localStorage.getItem(
           STORAGE.apiHash
         ) || "";
     }
 
+    // PHONE
     if (phoneInput) {
+
       phoneInput.value =
         localStorage.getItem(
           STORAGE.phone
         ) || "";
     }
 
+    // SESSION
+    // فقط Session همین تب
     if (sessionInput) {
+
       sessionInput.value =
-        localStorage.getItem(
+        sessionStorage.getItem(
           STORAGE.session
         ) || "";
     }
 
   } catch (error) {
+
     log(
       "خطا در خواندن اطلاعات ذخیره‌شده: " +
         error.message,
@@ -197,6 +245,9 @@ function loadInputs() {
 
 function saveInputs() {
   try {
+
+    // این موارد بین تب‌ها قابل استفاده هستند
+
     localStorage.setItem(
       STORAGE.apiId,
       apiIdInput.value.trim()
@@ -213,6 +264,7 @@ function saveInputs() {
     );
 
   } catch (error) {
+
     log(
       "خطا در ذخیره اطلاعات: " +
         error.message,
@@ -226,6 +278,7 @@ function saveInputs() {
 // ======================================================
 
 function getChatTitle(chat) {
+
   if (!chat) {
     return "گروه";
   }
@@ -239,6 +292,7 @@ function getChatTitle(chat) {
 }
 
 function isGroupChat(chat) {
+
   if (!chat) {
     return false;
   }
@@ -268,7 +322,9 @@ function isGroupChat(chat) {
 async function isSavedMessages(
   message
 ) {
+
   try {
+
     if (!currentUser) {
       return false;
     }
@@ -286,9 +342,12 @@ async function isSavedMessages(
     const userId =
       String(currentUser.id);
 
-    return chatId === userId;
+    return (
+      chatId === userId
+    );
 
   } catch (error) {
+
     console.error(
       "Saved Messages detection:",
       error
@@ -369,27 +428,28 @@ async function loginTelegram() {
     // Session
     // --------------------------------------------------
 
+    // فقط Session همین تب
     const savedSession =
       sessionInput?.value.trim() ||
-      localStorage.getItem(
+      sessionStorage.getItem(
         STORAGE.session
       ) ||
       "";
 
     log(
       savedSession
-        ? "Session قبلی پیدا شد."
-        : "Session قبلی وجود ندارد."
+        ? "Session همین تب پیدا شد."
+        : "برای این تب Session وجود ندارد."
     );
+
+    // --------------------------------------------------
+    // Telegram Client
+    // --------------------------------------------------
 
     const session =
       new StringSession(
         savedSession
       );
-
-    // --------------------------------------------------
-    // Telegram Client
-    // --------------------------------------------------
 
     log(
       "در حال ساخت Telegram Client..."
@@ -412,7 +472,7 @@ async function loginTelegram() {
     if (savedSession) {
 
       log(
-        "در حال اتصال با Session..."
+        "در حال اتصال با Session همین تب..."
       );
 
       await client.connect();
@@ -431,7 +491,7 @@ async function loginTelegram() {
     else {
 
       log(
-        "ورود جدید شروع شد."
+        "ورود جدید برای این تب شروع شد."
       );
 
       await client.start({
@@ -455,6 +515,7 @@ async function loginTelegram() {
               );
 
             if (!code) {
+
               throw new Error(
                 "کد ورود وارد نشد."
               );
@@ -472,6 +533,7 @@ async function loginTelegram() {
               );
 
             if (!password) {
+
               throw new Error(
                 "رمز دو مرحله‌ای وارد نشد."
               );
@@ -510,6 +572,7 @@ async function loginTelegram() {
     // --------------------------------------------------
 
     if (!client.connected) {
+
       await client.connect();
     }
 
@@ -540,18 +603,21 @@ async function loginTelegram() {
     const newSession =
       client.session.save();
 
-    localStorage.setItem(
+    // مهم:
+    // Session فقط در همین Tab ذخیره می‌شود
+    sessionStorage.setItem(
       STORAGE.session,
       newSession
     );
 
     if (sessionInput) {
+
       sessionInput.value =
         newSession;
     }
 
     log(
-      "Session String ذخیره شد.",
+      "Session این تب ذخیره شد.",
       "success"
     );
 
@@ -572,11 +638,13 @@ async function loginTelegram() {
     // --------------------------------------------------
 
     if (loginSection) {
+
       loginSection.style.display =
         "none";
     }
 
     if (botPanel) {
+
       botPanel.style.display =
         "block";
     }
@@ -617,6 +685,7 @@ async function loginTelegram() {
 async function setupMessageListener() {
 
   if (!client) {
+
     throw new Error(
       "Telegram Client وجود ندارد."
     );
@@ -637,7 +706,6 @@ async function setupMessageListener() {
         "Old handler remove error:",
         error
       );
-
     }
   }
 
@@ -705,12 +773,26 @@ async function handleIncomingMessage(
     return;
   }
 
+  console.log(
+    "[USERBOT] MESSAGE:",
+    text
+  );
+
   const chat =
     await message.getChat();
 
   if (!chat) {
     return;
   }
+
+  const chatTitle =
+    getChatTitle(chat);
+
+  console.log(
+    "[USERBOT] CHAT:",
+    chatTitle,
+    chat.className
+  );
 
   // ====================================================
   // SAVED MESSAGES
@@ -1063,6 +1145,15 @@ function startTimer(
             "Timer send error:",
             error
           );
+
+          log(
+            "❌ خطا در ارسال زمان‌بندی: " +
+              (
+                error?.message ||
+                String(error)
+              ),
+            "error"
+          );
         }
 
       },
@@ -1118,14 +1209,18 @@ async function restoreSchedules() {
       schedules
     );
 
-  if (ids.length === 0) {
+  if (
+    ids.length === 0
+  ) {
 
     log(
-      "هیچ زمان‌بندی ذخیره‌شده‌ای وجود ندارد."
+      "هیچ زمان‌بندی ذخیره‌شده‌ای برای این تب وجود ندارد."
     );
 
     return;
   }
+
+  let restored = 0;
 
   for (
     const chatId of ids
@@ -1159,10 +1254,12 @@ async function restoreSchedules() {
       chatId,
       schedule
     );
+
+    restored++;
   }
 
   log(
-    `${ids.length} زمان‌بندی بررسی و بازیابی شد.`,
+    `${restored} زمان‌بندی این تب بازیابی شد.`,
     "success"
   );
 }
@@ -1198,7 +1295,7 @@ async function sendScheduleList() {
       "me",
       {
         message:
-          "📋 هیچ زمان‌بندی فعالی وجود ندارد."
+          "📋 هیچ زمان‌بندی فعالی در این تب وجود ندارد."
       }
     );
 
@@ -1206,7 +1303,7 @@ async function sendScheduleList() {
   }
 
   let output =
-    "📋 زمان‌بندی‌های فعال\n\n";
+    "📋 زمان‌بندی‌های فعال این تب\n\n";
 
   let index = 1;
 
@@ -1317,12 +1414,13 @@ async function stopAllSchedules() {
     stopTimer(chatId);
   }
 
-  localStorage.removeItem(
+  // فقط زمان‌بندی همین تب
+  sessionStorage.removeItem(
     STORAGE.schedules
   );
 
   log(
-    "تمام زمان‌بندی‌ها متوقف شدند.",
+    "تمام زمان‌بندی‌های این تب متوقف شدند.",
     "success"
   );
 }
@@ -1340,6 +1438,9 @@ async function sendActivationMessage() {
       {
         message:
 `🟢 Userbot فعال شد.
+
+🆔 شناسه تب:
+${TAB_ID}
 
 دستورهای قابل استفاده:
 
@@ -1360,7 +1461,8 @@ Word off
 
 ⏱ زمان‌ها بر اساس دقیقه هستند.
 
-⚠️ صفحه Userbot باید باز و اتصال تلگرام فعال باشد.`
+⚠️ این تب Session مستقل خودش را دارد.
+⚠️ برای اجرای Userbot باید صفحه باز و اتصال تلگرام فعال باشد.`
       }
     );
 
@@ -1369,6 +1471,15 @@ Word off
     console.error(
       "Activation message error:",
       error
+    );
+
+    log(
+      "خطا در ارسال پیام فعال‌سازی: " +
+        (
+          error?.message ||
+          String(error)
+        ),
+      "error"
     );
   }
 }
@@ -1384,7 +1495,9 @@ async function logoutTelegram() {
     // Stop timers
     for (
       const chatId of
-      timers.keys()
+      Array.from(
+        timers.keys()
+      )
     ) {
 
       stopTimer(chatId);
@@ -1406,26 +1519,35 @@ async function logoutTelegram() {
 
     messageHandler = null;
 
-    localStorage.removeItem(
+    // فقط Session همین تب پاک می‌شود
+    sessionStorage.removeItem(
       STORAGE.session
     );
 
+    // فقط Schedule همین تب پاک می‌شود
+    sessionStorage.removeItem(
+      STORAGE.schedules
+    );
+
     if (sessionInput) {
+
       sessionInput.value = "";
     }
 
     if (botPanel) {
+
       botPanel.style.display =
         "none";
     }
 
     if (loginSection) {
+
       loginSection.style.display =
         "block";
     }
 
     log(
-      "از حساب خارج شدید.",
+      "از حساب این تب خارج شدید.",
       "success"
     );
 
@@ -1531,4 +1653,13 @@ log(
 
 console.log(
   "Telegram MTProto Userbot loaded."
+);
+
+console.log(
+  "Tab Session Mode: ENABLED"
+);
+
+console.log(
+  "TAB ID:",
+  TAB_ID
 );
