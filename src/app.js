@@ -2,782 +2,983 @@ import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
 import { NewMessage } from "telegram/events";
 
-
-// ============================================================
-// STORAGE
-// ============================================================
-
-const STORAGE = {
-
-  API_ID: "mtproto_api_id",
-
-  API_HASH: "mtproto_api_hash",
-
-  PHONE: "mtproto_phone",
-
-  SESSION: "mtproto_session",
-
-  GROUPS: "mtproto_groups"
-
-};
-
-
-// ============================================================
-// GLOBALS
-// ============================================================
-
 let client = null;
+let session = null;
+
+let apiId = null;
+let apiHash = "";
+let phoneNumber = "";
 
 let currentUser = null;
+let messageHandler = null;
 
+// Timers running in browser
 const timers = new Map();
 
+// ======================================================
+// DOM
+// ======================================================
 
-// ============================================================
-// HELPERS
-// ============================================================
+const $ = (id) => document.getElementById(id);
 
-function $(id) {
-  return document.getElementById(id);
+const apiIdInput = $("apiId");
+const apiHashInput = $("apiHash");
+const phoneInput = $("phone");
+const sessionInput = $("session");
+
+const loginBtn = $("loginBtn");
+const logoutBtn = $("logoutBtn");
+
+const loginSection = $("loginSection");
+const botPanel = $("botPanel");
+
+const statusEl = $("status");
+
+// ======================================================
+// Local Storage
+// ======================================================
+
+const STORAGE = {
+  apiId: "tg_api_id",
+  apiHash: "tg_api_hash",
+  phone: "tg_phone",
+  session: "tg_session",
+  schedules: "tg_schedules"
+};
+
+function saveSchedules(schedules) {
+  localStorage.setItem(
+    STORAGE.schedules,
+    JSON.stringify(schedules)
+  );
 }
 
-
-function setLoginStatus(text) {
-
-  $("loginStatus").textContent = text;
-
-}
-
-
-function setRuntimeStatus(text) {
-
-  $("runtimeStatus").textContent = text;
-
-}
-
-
-function getGroups() {
-
+function loadSchedules() {
   try {
-
     return JSON.parse(
-      localStorage.getItem(STORAGE.GROUPS) || "{}"
+      localStorage.getItem(STORAGE.schedules) || "{}"
     );
-
   } catch {
-
     return {};
+  }
+}
 
+function getSchedule(chatId) {
+  const schedules = loadSchedules();
+  return schedules[String(chatId)] || null;
+}
+
+function setSchedule(chatId, data) {
+  const schedules = loadSchedules();
+
+  schedules[String(chatId)] = {
+    ...data,
+    chatId: String(chatId),
+    updatedAt: Date.now()
+  };
+
+  saveSchedules(schedules);
+}
+
+function removeSchedule(chatId) {
+  const schedules = loadSchedules();
+
+  delete schedules[String(chatId)];
+
+  saveSchedules(schedules);
+}
+
+// ======================================================
+// UI
+// ======================================================
+
+function setStatus(text, type = "") {
+  if (!statusEl) return;
+
+  statusEl.textContent = text;
+  statusEl.className = "status " + type;
+}
+
+function showPanel() {
+  if (loginSection) {
+    loginSection.style.display = "none";
   }
 
+  if (botPanel) {
+    botPanel.style.display = "block";
+  }
 }
 
+function showLogin() {
+  if (loginSection) {
+    loginSection.style.display = "block";
+  }
 
-function saveGroups(groups) {
+  if (botPanel) {
+    botPanel.style.display = "none";
+  }
+}
 
-  localStorage.setItem(
-    STORAGE.GROUPS,
-    JSON.stringify(groups)
+// ======================================================
+// Saved settings
+// ======================================================
+
+function loadSavedInputs() {
+  if (apiIdInput) {
+    apiIdInput.value =
+      localStorage.getItem(STORAGE.apiId) || "";
+  }
+
+  if (apiHashInput) {
+    apiHashInput.value =
+      localStorage.getItem(STORAGE.apiHash) || "";
+  }
+
+  if (phoneInput) {
+    phoneInput.value =
+      localStorage.getItem(STORAGE.phone) || "";
+  }
+
+  if (sessionInput) {
+    sessionInput.value =
+      localStorage.getItem(STORAGE.session) || "";
+  }
+}
+
+function saveInputs() {
+  if (apiIdInput) {
+    localStorage.setItem(
+      STORAGE.apiId,
+      apiIdInput.value.trim()
+    );
+  }
+
+  if (apiHashInput) {
+    localStorage.setItem(
+      STORAGE.apiHash,
+      apiHashInput.value.trim()
+    );
+  }
+
+  if (phoneInput) {
+    localStorage.setItem(
+      STORAGE.phone,
+      phoneInput.value.trim()
+    );
+  }
+}
+
+// ======================================================
+// Telegram Login
+// ======================================================
+
+async function loginTelegram() {
+  try {
+    apiId = Number(apiIdInput.value.trim());
+    apiHash = apiHashInput.value.trim();
+    phoneNumber = phoneInput.value.trim();
+
+    if (!apiId || !apiHash) {
+      throw new Error(
+        "API ID و API Hash را وارد کنید."
+      );
+    }
+
+    saveInputs();
+
+    const savedSession =
+      sessionInput.value.trim() ||
+      localStorage.getItem(STORAGE.session) ||
+      "";
+
+    session = new StringSession(savedSession);
+
+    client = new TelegramClient(
+      session,
+      apiId,
+      apiHash,
+      {
+        connectionRetries: 5
+      }
+    );
+
+    setStatus(
+      "در حال اتصال به تلگرام...",
+      "loading"
+    );
+
+    if (savedSession) {
+      await client.connect();
+    } else {
+      await client.start({
+        phoneNumber: async () => phoneNumber,
+
+        password: async () => {
+          return prompt(
+            "رمز دو مرحله‌ای تلگرام را وارد کنید:"
+          );
+        },
+
+        phoneCode: async () => {
+          return prompt(
+            "کد ارسال‌شده توسط تلگرام را وارد کنید:"
+          );
+        },
+
+        onError: (err) => {
+          console.error(err);
+          setStatus(
+            "خطا در ورود: " + err.message,
+            "error"
+          );
+        }
+      });
+    }
+
+    if (!client.connected) {
+      await client.connect();
+    }
+
+    currentUser = await client.getMe();
+
+    // Save session
+    const newSession =
+      client.session.save();
+
+    localStorage.setItem(
+      STORAGE.session,
+      newSession
+    );
+
+    sessionInput.value = newSession;
+
+    setStatus(
+      `وارد شدید: ${
+        currentUser.username
+          ? "@" + currentUser.username
+          : currentUser.firstName || "کاربر"
+      }`,
+      "success"
+    );
+
+    showPanel();
+
+    // Setup message listener
+    await setupMessageListener();
+
+    // Restore active schedules
+    await restoreSchedules();
+
+    // Send activation message
+    await sendActivationMessage();
+
+  } catch (error) {
+    console.error(error);
+
+    setStatus(
+      "خطا: " + (
+        error?.message || String(error)
+      ),
+      "error"
+    );
+  }
+}
+
+// ======================================================
+// Message Listener
+// ======================================================
+
+async function setupMessageListener() {
+  if (!client) return;
+
+  // جلوگیری از نصب Listener چندباره
+  if (messageHandler) {
+    try {
+      client.removeEventHandler(
+        messageHandler
+      );
+    } catch {}
+  }
+
+  messageHandler = async (event) => {
+    try {
+      await handleIncomingMessage(event);
+    } catch (error) {
+      console.error(
+        "Message handler error:",
+        error
+      );
+    }
+  };
+
+  client.addEventHandler(
+    messageHandler,
+    new NewMessage({})
   );
-
 }
 
+// ======================================================
+// Incoming Message
+// ======================================================
 
-function normalizeId(id) {
+async function handleIncomingMessage(event) {
+  if (!event || !event.message) {
+    return;
+  }
 
-  return String(id);
+  const message = event.message;
 
+  const rawText =
+    message.message || "";
+
+  const text =
+    rawText.trim();
+
+  if (!text) return;
+
+  const chat = await message.getChat();
+
+  if (!chat) return;
+
+  // ====================================================
+  // Saved Messages
+  // ====================================================
+
+  if (await isSavedMessages(message)) {
+
+    // .list
+    if (
+      text.toLowerCase() === ".list"
+    ) {
+      await sendScheduleList();
+      return;
+    }
+
+    // .stopall
+    if (
+      text.toLowerCase() === ".stopall"
+    ) {
+      await stopAllSchedules();
+
+      await client.sendMessage(
+        "me",
+        {
+          message:
+            "🛑 تمام زمان‌بندی‌ها متوقف شدند."
+        }
+      );
+
+      return;
+    }
+
+    return;
+  }
+
+  // ====================================================
+  // Group commands
+  // ====================================================
+
+  if (!isGroupChat(chat)) {
+    return;
+  }
+
+  const parsed =
+    parseCommand(text);
+
+  if (!parsed) {
+    return;
+  }
+
+  const chatId =
+    String(chat.id);
+
+  const title =
+    getChatTitle(chat);
+
+  // ----------------------------------------------------
+  // OFF
+  // ----------------------------------------------------
+
+  if (parsed.action === "off") {
+
+    stopTimer(chatId);
+    removeSchedule(chatId);
+
+    await client.sendMessage(
+      chat,
+      {
+        message:
+          "🛑 ارسال خودکار برای این گروه متوقف شد."
+      }
+    );
+
+    return;
+  }
+
+  // ----------------------------------------------------
+  // ON / EDIT
+  // ----------------------------------------------------
+
+  if (
+    parsed.action === "on" ||
+    parsed.action === "edit"
+  ) {
+
+    stopTimer(chatId);
+
+    const schedule = {
+      chatId,
+      title,
+      text: parsed.text,
+      minutes: parsed.minutes,
+      intervalMs:
+        parsed.minutes * 60 * 1000,
+      active: true,
+      createdAt: Date.now()
+    };
+
+    // Try to create a useful group link
+    try {
+      if (
+        chat.username
+      ) {
+        schedule.link =
+          "https://t.me/" +
+          chat.username;
+      }
+    } catch {}
+
+    setSchedule(
+      chatId,
+      schedule
+    );
+
+    startTimer(
+      chatId,
+      schedule
+    );
+
+    await client.sendMessage(
+      chat,
+      {
+        message:
+          `✅ زمان‌بندی ${
+            parsed.action === "edit"
+              ? "ویرایش"
+              : "فعال"
+          } شد.\n\n` +
+          `📝 متن: ${parsed.text}\n` +
+          `⏱ فاصله: ${parsed.minutes} دقیقه`
+      }
+    );
+
+    return;
+  }
 }
 
+// ======================================================
+// Detect Saved Messages
+// ======================================================
 
-// ============================================================
-// COMMAND PARSER
-// ============================================================
+async function isSavedMessages(message) {
+  try {
+    const chat = await message.getChat();
+
+    if (!chat) {
+      return false;
+    }
+
+    // Saved Messages has input peer "me"
+    if (
+      message.out ||
+      message.peerId?.className ===
+        "PeerUser"
+    ) {
+      const sender = await message.getSender();
+
+      if (
+        sender &&
+        currentUser &&
+        String(sender.id) ===
+          String(currentUser.id)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+
+  } catch {
+    return false;
+  }
+}
+
+// ======================================================
+// Group Detection
+// ======================================================
+
+function isGroupChat(chat) {
+  if (!chat) return false;
+
+  // Normal group
+  if (
+    chat.className === "Chat"
+  ) {
+    return true;
+  }
+
+  // Supergroup
+  if (
+    chat.className === "Channel" &&
+    chat.megagroup === true
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+// ======================================================
+// Parse Commands
+// ======================================================
 
 function parseCommand(text) {
 
-  text = text.trim();
-
-
-  // ------------------------------
-  // OFF
-  // ------------------------------
+  // ----------------------------------------------
+  // Word off
+  // ----------------------------------------------
 
   if (
     /^word\s+off$/i.test(text)
   ) {
-
     return {
-      type: "off"
+      action: "off"
     };
-
   }
 
+  // ----------------------------------------------
+  // word=TEXT time=NUMBER on
+  // word=TEXT time=NUMBER edit
+  // ----------------------------------------------
 
-  // ------------------------------
-  // ON / EDIT
-  // ------------------------------
-
-  const match = text.match(
-    /^word\s*=\s*(.*?)\s+time\s*=\s*(\d+(?:\.\d+)?)\s+(on|edit)$/i
-  );
-
+  const match =
+    text.match(
+      /^word=(.+?)\s+time=(\d+(?:\.\d+)?)\s+(on|edit)$/i
+    );
 
   if (!match) {
-
     return null;
-
   }
 
+  const word =
+    match[1].trim();
 
-  const word = match[1].trim();
+  const minutes =
+    Number(match[2]);
 
-  const minutes = Number(match[2]);
-
-  const type = match[3].toLowerCase();
-
+  const action =
+    match[3].toLowerCase();
 
   if (!word) {
-
     return null;
-
   }
-
 
   if (
     !Number.isFinite(minutes) ||
-    minutes <= 0 ||
-    minutes > 1440
+    minutes <= 0
   ) {
-
     return null;
-
   }
-
 
   return {
-
-    type,
-
-    word,
-
-    minutes
-
+    text: word,
+    minutes,
+    action
   };
-
 }
 
+// ======================================================
+// Timer
+// ======================================================
 
-// ============================================================
-// GROUP CHECK
-// ============================================================
+function startTimer(
+  chatId,
+  schedule
+) {
+  stopTimer(chatId);
 
-function isGroup(entity) {
-
-  if (!entity) {
-
-    return false;
-
-  }
-
-
-  if (
-    entity.className === "Chat"
-  ) {
-
-    return true;
-
-  }
-
+  const interval =
+    Number(schedule.intervalMs);
 
   if (
-    entity.className === "Channel" &&
-    entity.megagroup === true
+    !Number.isFinite(interval) ||
+    interval <= 0
   ) {
-
-    return true;
-
-  }
-
-
-  return false;
-
-}
-
-
-// ============================================================
-// GROUP LINK
-// ============================================================
-
-function getGroupLink(entity, chatId) {
-
-  if (
-    entity &&
-    entity.username
-  ) {
-
-    return (
-      "https://t.me/" +
-      entity.username
-    );
-
-  }
-
-
-  const id = String(chatId);
-
-
-  if (
-    id.startsWith("-100")
-  ) {
-
-    return (
-      "https://t.me/c/" +
-      id.substring(4)
-    );
-
-  }
-
-
-  return "لینک عمومی ندارد";
-
-}
-
-
-// ============================================================
-// TIMER
-// ============================================================
-
-function stopTimer(chatId) {
-
-  const key = normalizeId(chatId);
-
-  const timer = timers.get(key);
-
-
-  if (timer) {
-
-    clearInterval(timer);
-
-  }
-
-
-  timers.delete(key);
-
-}
-
-
-// ============================================================
-
-function startTimer(chatId) {
-
-  const key = normalizeId(chatId);
-
-
-  stopTimer(key);
-
-
-  const groups = getGroups();
-
-  const group = groups[key];
-
-
-  if (
-    !group ||
-    !group.enabled
-  ) {
-
     return;
-
   }
 
+  const timer =
+    setInterval(
+      async () => {
 
-  const milliseconds =
-    group.minutes * 60 * 1000;
+        try {
 
-
-  const timer = setInterval(
-    async () => {
-
-      try {
-
-        await client.sendMessage(
-          chatId,
-          {
-            message: group.word
+          if (!client) {
+            return;
           }
-        );
 
-      } catch (error) {
+          if (!client.connected) {
+            try {
+              await client.connect();
+            } catch {
+              return;
+            }
+          }
 
-        console.error(
-          "Send error:",
-          error
-        );
+          await client.sendMessage(
+            Number(chatId),
+            {
+              message:
+                schedule.text
+            }
+          );
 
-      }
+          console.log(
+            "Scheduled message sent:",
+            chatId,
+            schedule.text
+          );
 
-    },
-    milliseconds
-  );
+        } catch (error) {
 
+          console.error(
+            "Scheduled send error:",
+            error
+          );
+
+        }
+
+      },
+      interval
+    );
 
   timers.set(
-    key,
+    String(chatId),
     timer
   );
 
+  console.log(
+    `Timer started: ${chatId} / ${schedule.minutes} min`
+  );
 }
 
-
-// ============================================================
-// ACTIVATE
-// ============================================================
-
-async function activateGroup(
-  chatId,
-  word,
-  minutes
-) {
-
-  const key = normalizeId(chatId);
-
-  const groups = getGroups();
-
-
-  let entity = null;
-
-
-  try {
-
-    entity =
-      await client.getEntity(chatId);
-
-  } catch {
-
-    entity = null;
-
-  }
-
-
-  groups[key] = {
-
-    enabled: true,
-
-    word,
-
-    minutes,
-
-    title:
-      entity?.title ||
-      entity?.name ||
-      "Unknown",
-
-    username:
-      entity?.username ||
-      "",
-
-    link:
-      getGroupLink(
-        entity,
-        chatId
-      ),
-
-    updatedAt:
-      Date.now()
-
-  };
-
-
-  saveGroups(groups);
-
-
-  startTimer(chatId);
-
-}
-
-
-// ============================================================
-// DEACTIVATE
-// ============================================================
-
-function deactivateGroup(chatId) {
+function stopTimer(chatId) {
 
   const key =
-    normalizeId(chatId);
+    String(chatId);
 
+  const timer =
+    timers.get(key);
 
-  const groups =
-    getGroups();
-
-
-  if (groups[key]) {
-
-    groups[key].enabled =
-      false;
-
-    saveGroups(groups);
-
+  if (timer) {
+    clearInterval(timer);
+    timers.delete(key);
   }
-
-
-  stopTimer(chatId);
-
 }
 
+// ======================================================
+// Restore Schedules
+// ======================================================
 
-// ============================================================
-// LIST
-// ============================================================
+async function restoreSchedules() {
 
-async function sendList() {
+  const schedules =
+    loadSchedules();
 
-  const groups =
-    getGroups();
+  for (
+    const chatId of Object.keys(schedules)
+  ) {
 
+    const schedule =
+      schedules[chatId];
+
+    if (
+      !schedule ||
+      schedule.active !== true
+    ) {
+      continue;
+    }
+
+    // Ensure required fields
+    if (
+      !schedule.text ||
+      !schedule.minutes
+    ) {
+      continue;
+    }
+
+    schedule.intervalMs =
+      Number(schedule.minutes) *
+      60 *
+      1000;
+
+    startTimer(
+      chatId,
+      schedule
+    );
+  }
+}
+
+// ======================================================
+// List
+// ======================================================
+
+async function sendScheduleList() {
+
+  if (!client) {
+    return;
+  }
+
+  const schedules =
+    loadSchedules();
 
   const active =
-    Object.entries(groups)
+    Object.values(schedules)
       .filter(
-        ([, value]) =>
-          value &&
-          value.enabled
+        item =>
+          item &&
+          item.active === true
       );
 
-
-  if (!active.length) {
+  if (active.length === 0) {
 
     await client.sendMessage(
       "me",
       {
         message:
-          "📋 هیچ گروه فعالی وجود ندارد."
+          "📋 هیچ زمان‌بندی فعالی وجود ندارد."
       }
     );
 
     return;
-
   }
-
 
   let output =
-    "📋 لیست گروه‌های فعال\n\n";
+    "📋 زمان‌بندی‌های فعال\n\n";
 
+  let index = 1;
 
-  let number = 1;
+  for (const schedule of active) {
 
+    let link =
+      schedule.link || "";
 
-  for (
-    const [
-      chatId,
-      group
-    ] of active
-  ) {
+    // Try to get updated group information
+    try {
+
+      const entity =
+        await client.getEntity(
+          Number(schedule.chatId)
+        );
+
+      if (
+        entity?.username
+      ) {
+        link =
+          "https://t.me/" +
+          entity.username;
+      }
+
+      if (
+        entity?.title
+      ) {
+        schedule.title =
+          entity.title;
+      }
+
+      setSchedule(
+        schedule.chatId,
+        schedule
+      );
+
+    } catch {}
 
     output +=
-      `${number}. ${group.title}\n`;
+      `${index}. ${schedule.title || "گروه"}\n`;
 
     output +=
-      `🔗 ${group.link}\n`;
+      `📝 متن: ${schedule.text}\n`;
 
     output +=
-      `📝 متن: ${group.word}\n`;
+      `⏱ هر ${schedule.minutes} دقیقه\n`;
 
     output +=
-      `⏱ زمان: هر ${group.minutes} دقیقه\n`;
+      `🆔 ${schedule.chatId}\n`;
 
-    output +=
-      `🆔 ${chatId}\n\n`;
+    if (link) {
+      output +=
+        `🔗 ${link}\n`;
+    }
 
+    output += "\n";
 
-    number++;
-
+    index++;
   }
-
 
   await client.sendMessage(
     "me",
     {
-      message: output
+      message: output.trim()
     }
   );
-
 }
 
+// ======================================================
+// Stop All
+// ======================================================
 
-// ============================================================
-// SAVE MESSAGE
-// ============================================================
+async function stopAllSchedules() {
+
+  const schedules =
+    loadSchedules();
+
+  for (
+    const chatId of Object.keys(schedules)
+  ) {
+    stopTimer(chatId);
+  }
+
+  localStorage.removeItem(
+    STORAGE.schedules
+  );
+}
+
+// ======================================================
+// Activation Message
+// ======================================================
 
 async function sendActivationMessage() {
 
-  const text = `
+  try {
 
-✅ Userbot با موفقیت فعال شد.
+    await client.sendMessage(
+      "me",
+      {
+        message:
+`🟢 Userbot فعال شد.
 
-━━━━━━━━━━━━━━
+دستورهای قابل استفاده:
 
-📚 آموزش استفاده
+📌 فعال کردن:
+word=میو time=4 on
 
-برای فعال کردن ارسال خودکار در یک گروه:
-
-word=سلام time=4 on
-
-یعنی:
-
-هر ۴ دقیقه
-کلمه «سلام» ارسال می‌شود.
-
-━━━━━━━━━━━━━━
-
-✏️ تغییر متن و زمان:
-
+📌 تغییر:
 word=هی time=2 edit
 
-از این به بعد هر ۲ دقیقه
-«هی» ارسال می‌شود.
-
-━━━━━━━━━━━━━━
-
-🛑 خاموش کردن:
-
+📌 توقف:
 Word off
 
-ارسال خودکار همان گروه متوقف می‌شود.
-
-━━━━━━━━━━━━━━
-
-📋 مشاهده گروه‌های فعال:
-
-در Saved Messages بنویس:
-
+📌 مشاهده لیست:
 .list
 
-━━━━━━━━━━━━━━
+📌 توقف همه:
+.stopall
 
-⚠️ صفحه Userbot باید باز و متصل باشد.
+⏱ زمان‌ها بر اساس دقیقه هستند.
 
-`;
+⚠️ برای اجرای زمان‌بندی‌ها باید این صفحه و اتصال تلگرام فعال بماند.`
+      }
+    );
 
+  } catch (error) {
 
-  await client.sendMessage(
-    "me",
-    {
-      message: text
-    }
-  );
+    console.error(
+      "Activation message error:",
+      error
+    );
 
+  }
 }
 
+// ======================================================
+// Logout
+// ======================================================
 
-// ============================================================
-// MESSAGE HANDLER
-// ============================================================
-
-async function handleMessage(event) {
+async function logoutTelegram() {
 
   try {
 
-    const message =
-      event.message;
-
-
-    if (!message) {
-
-      return;
-
-    }
-
-
-    const text =
-      message.message || "";
-
-
-    if (!text) {
-
-      return;
-
-    }
-
-
-    // ----------------------------------
-    // Saved Messages .list
-    // ----------------------------------
-
-    if (
-      message.isPrivate
+    // Stop all timers
+    for (
+      const chatId of timers.keys()
     ) {
+      stopTimer(chatId);
+    }
+
+    if (client) {
 
       try {
-
-        const sender =
-          await message.getSender();
-
-
-        if (
-          sender &&
-          currentUser &&
-          String(sender.id) ===
-          String(currentUser.id) &&
-          text.trim() === ".list"
-        ) {
-
-          await sendList();
-
-          return;
-
-        }
-
+        await client.disconnect();
       } catch {}
 
+      client = null;
     }
 
+    currentUser = null;
+    messageHandler = null;
 
-    // ----------------------------------
-    // Group commands
-    // ----------------------------------
+    localStorage.removeItem(
+      STORAGE.session
+    );
 
-    const chat =
-      await message.getChat();
+    sessionInput.value = "";
 
+    showLogin();
 
-    if (!isGroup(chat)) {
+    setStatus(
+      "از حساب خارج شدید.",
+      "success"
+    );
 
-      return;
+  } catch (error) {
 
-    }
+    console.error(error);
 
+    setStatus(
+      "خطا هنگام خروج: " +
+      error.message,
+      "error"
+    );
+  }
+}
 
-    // فقط دستورهایی که خود اکانت نوشته
-    const sender =
-      await message.getSender();
+// ======================================================
+// Button Events
+// ======================================================
 
+if (loginBtn) {
+  loginBtn.addEventListener(
+    "click",
+    loginTelegram
+  );
+}
 
-    if (
-      !sender ||
-      !currentUser ||
-      String(sender.id) !==
-      String(currentUser.id)
-    ) {
+if (logoutBtn) {
+  logoutBtn.addEventListener(
+    "click",
+    logoutTelegram
+  );
+}
 
-      return;
+// ======================================================
+// Initial
+// ======================================================
 
-    }
+loadSavedInputs();
 
-
-    const command =
-      parseCommand(text);
-
-
-    if (!command) {
-
-      return;
-
-    }
-
-
-    const chatId =
-      message.chatId;
-
-
-    // ----------------------------------
-    // OFF
-    // ----------------------------------
-
-    if (
-      command.type === "off"
-    ) {
-
-      deactivateGroup(chatId);
-
-      await client.sendMessage(
-        chatId,
-        {
-          message:
-            "🛑 ارسال خودکار در این گروه خاموش شد."
-        }
-      );
-
-      return;
-
-    }
-
-
-    // ----------------------------------
-    // ON
-    // ----------------------------------
-
-    if (
-      command.type === "on"
-    ) {
-
-      await activateGroup(
-        chatId,
-        command.word,
-        command.minutes
-      );
-
-
-      await client.sendMessage(
-        chatId,
-        {
-          message:
-            `✅ فعال شد.\n\n📝 ${command.word}\n⏱ هر ${command.minutes} دقیقه`
-        }
-      );
-
-
-      return;
-
-    }
-
-
-    // ----------------------------------
-    // EDIT
-    // ----------------------------------
-
-    if (
-      command.type === "edit"
-    ) {
-
-      const groups =
-        getGroups();
-
-
-      const key =
-        normalizeId(chatId);
-
-
-      if (
-        !groups[key] ||
-        !groups[key].enabled
-      ) {
-
-        await client.sendMessage(
-          chatId,
-          {
-            message:
-              "⚠️ ابتدا Userbot را با دستور on فعال کن."
-          }
-        );
-
-        return;
-
-      }
-
-
-      await activateGroup(
-        chatId,
-        command.word,
-        command.minutes
-      );
-
-
-      await client.sendMessage(
-        chatId,
-        {
-          message:
-            `✏️ تنظیمات تغییر کرد.\n\n📝 ${command.word}\n⏱ هر ${command.minutes} دقیقه`
+console.log(
+  "Telegram MTProto Userbot loaded."
+);یر کرد.\n\n📝 ${command.word}\n⏱ هر ${command.minutes} دقیقه`
         }
       );
 
