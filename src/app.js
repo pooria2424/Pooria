@@ -1,5 +1,16 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
+import { NewMessage } from "telegram/events";
+
+// ======================================================
+// GLOBAL
+// ======================================================
+
+let client = null;
+let currentUser = null;
+let messageHandler = null;
+
+const timers = new Map();
 
 // ======================================================
 // DOM
@@ -20,77 +31,130 @@ const botPanel = $("botPanel");
 const statusEl = $("status");
 
 // ======================================================
-// Telegram
-// ======================================================
-
-let client = null;
-let currentUser = null;
-
-// ======================================================
-// Debug Logger
-// ======================================================
-
-function log(message, type = "info") {
-  if (!statusEl) return;
-
-  const time = new Date().toLocaleTimeString();
-
-  statusEl.innerHTML =
-    `<div style="
-      margin-bottom:8px;
-      padding:8px;
-      border-radius:8px;
-      background:#020617;
-      color:${
-        type === "error"
-          ? "#f87171"
-          : type === "success"
-          ? "#4ade80"
-          : "#38bdf8"
-      };
-    ">
-      [${time}] ${escapeHtml(message)}
-    </div>` +
-    statusEl.innerHTML;
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-// ======================================================
-// Check Page
-// ======================================================
-
-console.log(
-  "Telegram Userbot app.js loaded."
-);
-
-if (!loginBtn) {
-  console.error(
-    "loginBtn not found!"
-  );
-} else {
-  console.log(
-    "loginBtn found."
-  );
-}
-
-// ======================================================
-// Storage
+// STORAGE
 // ======================================================
 
 const STORAGE = {
   apiId: "tg_api_id",
   apiHash: "tg_api_hash",
   phone: "tg_phone",
-  session: "tg_session"
+  session: "tg_session",
+  schedules: "tg_schedules"
 };
+
+// ======================================================
+// DEBUG / STATUS
+// ======================================================
+
+function log(message, type = "info") {
+  console.log("[USERBOT]", message);
+
+  if (!statusEl) return;
+
+  const color =
+    type === "error"
+      ? "#f87171"
+      : type === "success"
+      ? "#4ade80"
+      : "#38bdf8";
+
+  const time =
+    new Date().toLocaleTimeString("fa-IR");
+
+  const row =
+    document.createElement("div");
+
+  row.style.cssText = `
+    margin-bottom:8px;
+    padding:8px;
+    border-radius:8px;
+    background:#020617;
+    color:${color};
+    direction:rtl;
+    text-align:right;
+    font-size:13px;
+  `;
+
+  row.textContent =
+    `[${time}] ${message}`;
+
+  statusEl.prepend(row);
+}
+
+function clearStatus() {
+  if (statusEl) {
+    statusEl.innerHTML = "";
+  }
+}
+
+// ======================================================
+// STORAGE FUNCTIONS
+// ======================================================
+
+function loadSchedules() {
+  try {
+    return JSON.parse(
+      localStorage.getItem(
+        STORAGE.schedules
+      ) || "{}"
+    );
+  } catch (error) {
+    console.error(
+      "loadSchedules:",
+      error
+    );
+
+    return {};
+  }
+}
+
+function saveSchedules(data) {
+  localStorage.setItem(
+    STORAGE.schedules,
+    JSON.stringify(data)
+  );
+}
+
+function getSchedule(chatId) {
+  const schedules =
+    loadSchedules();
+
+  return (
+    schedules[String(chatId)] ||
+    null
+  );
+}
+
+function setSchedule(
+  chatId,
+  schedule
+) {
+  const schedules =
+    loadSchedules();
+
+  schedules[String(chatId)] = {
+    ...schedule,
+    chatId: String(chatId),
+    updatedAt: Date.now()
+  };
+
+  saveSchedules(schedules);
+}
+
+function removeSchedule(chatId) {
+  const schedules =
+    loadSchedules();
+
+  delete schedules[
+    String(chatId)
+  ];
+
+  saveSchedules(schedules);
+}
+
+// ======================================================
+// INPUT STORAGE
+// ======================================================
 
 function loadInputs() {
   try {
@@ -122,22 +186,14 @@ function loadInputs() {
         ) || "";
     }
 
-    log(
-      "اطلاعات ذخیره‌شده خوانده شد."
-    );
-
   } catch (error) {
     log(
-      "خطا در خواندن اطلاعات: " +
+      "خطا در خواندن اطلاعات ذخیره‌شده: " +
         error.message,
       "error"
     );
   }
 }
-
-// ======================================================
-// Save Inputs
-// ======================================================
 
 function saveInputs() {
   try {
@@ -155,6 +211,7 @@ function saveInputs() {
       STORAGE.phone,
       phoneInput.value.trim()
     );
+
   } catch (error) {
     log(
       "خطا در ذخیره اطلاعات: " +
@@ -165,16 +222,99 @@ function saveInputs() {
 }
 
 // ======================================================
-// Login
+// CHAT HELPERS
+// ======================================================
+
+function getChatTitle(chat) {
+  if (!chat) {
+    return "گروه";
+  }
+
+  return (
+    chat.title ||
+    chat.username ||
+    chat.firstName ||
+    "گروه"
+  );
+}
+
+function isGroupChat(chat) {
+  if (!chat) {
+    return false;
+  }
+
+  // Normal groups
+  if (
+    chat.className === "Chat"
+  ) {
+    return true;
+  }
+
+  // Supergroups
+  if (
+    chat.className === "Channel" &&
+    chat.megagroup === true
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+// ======================================================
+// SAVED MESSAGES
+// ======================================================
+
+async function isSavedMessages(
+  message
+) {
+  try {
+    if (!currentUser) {
+      return false;
+    }
+
+    const chat =
+      await message.getChat();
+
+    if (!chat) {
+      return false;
+    }
+
+    const chatId =
+      String(chat.id);
+
+    const userId =
+      String(currentUser.id);
+
+    return chatId === userId;
+
+  } catch (error) {
+    console.error(
+      "Saved Messages detection:",
+      error
+    );
+
+    return false;
+  }
+}
+
+// ======================================================
+// LOGIN
 // ======================================================
 
 async function loginTelegram() {
+
+  clearStatus();
 
   log(
     "دکمه ورود کلیک شد."
   );
 
   try {
+
+    // --------------------------------------------------
+    // Validate fields
+    // --------------------------------------------------
 
     if (!apiIdInput) {
       throw new Error(
@@ -225,14 +365,9 @@ async function loginTelegram() {
 
     saveInputs();
 
-    log(
-      "اطلاعات ورود معتبر است.",
-      "success"
-    );
-
-    // ==================================================
+    // --------------------------------------------------
     // Session
-    // ==================================================
+    // --------------------------------------------------
 
     const savedSession =
       sessionInput?.value.trim() ||
@@ -244,7 +379,7 @@ async function loginTelegram() {
     log(
       savedSession
         ? "Session قبلی پیدا شد."
-        : "Session وجود ندارد؛ ورود جدید شروع می‌شود."
+        : "Session قبلی وجود ندارد."
     );
 
     const session =
@@ -252,9 +387,9 @@ async function loginTelegram() {
         savedSession
       );
 
-    // ==================================================
-    // Create Client
-    // ==================================================
+    // --------------------------------------------------
+    // Telegram Client
+    // --------------------------------------------------
 
     log(
       "در حال ساخت Telegram Client..."
@@ -270,14 +405,9 @@ async function loginTelegram() {
         }
       );
 
-    log(
-      "Telegram Client ساخته شد.",
-      "success"
-    );
-
-    // ==================================================
+    // --------------------------------------------------
     // Existing Session
-    // ==================================================
+    // --------------------------------------------------
 
     if (savedSession) {
 
@@ -288,15 +418,15 @@ async function loginTelegram() {
       await client.connect();
 
       log(
-        "اتصال با Session برقرار شد.",
+        "اتصال برقرار شد.",
         "success"
       );
 
     }
 
-    // ==================================================
+    // --------------------------------------------------
     // New Login
-    // ==================================================
+    // --------------------------------------------------
 
     else {
 
@@ -306,108 +436,106 @@ async function loginTelegram() {
 
       await client.start({
 
-        phoneNumber: async () => {
+        phoneNumber:
+          async () => {
 
-          log(
-            "شماره تلفن درخواست شد."
-          );
-
-          return phone;
-        },
-
-        phoneCode: async () => {
-
-          log(
-            "کد ورود تلگرام را وارد کنید."
-          );
-
-          const code =
-            prompt(
-              "کد ورود تلگرام:"
+            log(
+              "شماره تلفن ارسال شد."
             );
 
-          if (!code) {
-            throw new Error(
-              "کد ورود وارد نشد."
+            return phone;
+          },
+
+        phoneCode:
+          async () => {
+
+            const code =
+              prompt(
+                "کد ورود تلگرام را وارد کنید:"
+              );
+
+            if (!code) {
+              throw new Error(
+                "کد ورود وارد نشد."
+              );
+            }
+
+            return code.trim();
+          },
+
+        password:
+          async () => {
+
+            const password =
+              prompt(
+                "رمز دو مرحله‌ای تلگرام را وارد کنید:"
+              );
+
+            if (!password) {
+              throw new Error(
+                "رمز دو مرحله‌ای وارد نشد."
+              );
+            }
+
+            return password;
+          },
+
+        onError:
+          (error) => {
+
+            console.error(
+              "Telegram login error:",
+              error
+            );
+
+            log(
+              "خطای ورود: " +
+                (
+                  error?.message ||
+                  String(error)
+                ),
+              "error"
             );
           }
-
-          log(
-            "کد ورود دریافت شد."
-          );
-
-          return code;
-        },
-
-        password: async () => {
-
-          log(
-            "رمز دو مرحله‌ای درخواست شد."
-          );
-
-          const password =
-            prompt(
-              "رمز دو مرحله‌ای تلگرام:"
-            );
-
-          if (!password) {
-            throw new Error(
-              "رمز دو مرحله‌ای وارد نشد."
-            );
-          }
-
-          return password;
-        },
-
-        onError: (error) => {
-
-          console.error(
-            "Telegram login error:",
-            error
-          );
-
-          log(
-            "خطای Telegram: " +
-              (error?.message ||
-                String(error)),
-            "error"
-          );
-        }
-
       });
 
       log(
-        "ورود به تلگرام با موفقیت انجام شد.",
+        "ورود با موفقیت انجام شد.",
         "success"
       );
     }
 
-    // ==================================================
-    // Get User
-    // ==================================================
+    // --------------------------------------------------
+    // Connection Check
+    // --------------------------------------------------
 
-    log(
-      "در حال دریافت اطلاعات حساب..."
-    );
+    if (!client.connected) {
+      await client.connect();
+    }
+
+    // --------------------------------------------------
+    // Get User
+    // --------------------------------------------------
 
     currentUser =
       await client.getMe();
 
+    const username =
+      currentUser.username
+        ? "@" +
+          currentUser.username
+        : currentUser.firstName ||
+          "کاربر";
+
     log(
       "حساب شناسایی شد: " +
-        (
-          currentUser.username
-            ? "@" +
-              currentUser.username
-            : currentUser.firstName ||
-              "کاربر"
-        ),
+        username,
       "success"
     );
 
-    // ==================================================
+    // --------------------------------------------------
     // Save Session
-    // ==================================================
+    // --------------------------------------------------
 
     const newSession =
       client.session.save();
@@ -423,13 +551,25 @@ async function loginTelegram() {
     }
 
     log(
-      "Session String ساخته و ذخیره شد.",
+      "Session String ذخیره شد.",
       "success"
     );
 
-    // ==================================================
-    // Show Panel
-    // ==================================================
+    // --------------------------------------------------
+    // Setup Listener
+    // --------------------------------------------------
+
+    await setupMessageListener();
+
+    // --------------------------------------------------
+    // Restore Timers
+    // --------------------------------------------------
+
+    await restoreSchedules();
+
+    // --------------------------------------------------
+    // UI
+    // --------------------------------------------------
 
     if (loginSection) {
       loginSection.style.display =
@@ -441,8 +581,14 @@ async function loginTelegram() {
         "block";
     }
 
+    // --------------------------------------------------
+    // Activation Message
+    // --------------------------------------------------
+
+    await sendActivationMessage();
+
     log(
-      "ورود کامل شد.",
+      "🟢 Userbot کاملاً فعال شد.",
       "success"
     );
 
@@ -454,39 +600,811 @@ async function loginTelegram() {
     );
 
     log(
-      "❌ خطا: " +
+      "❌ " +
         (
           error?.message ||
           String(error)
         ),
       "error"
     );
-
   }
 }
 
 // ======================================================
-// Logout
+// MESSAGE LISTENER
+// ======================================================
+
+async function setupMessageListener() {
+
+  if (!client) {
+    throw new Error(
+      "Telegram Client وجود ندارد."
+    );
+  }
+
+  // Remove previous handler
+  if (messageHandler) {
+
+    try {
+
+      client.removeEventHandler(
+        messageHandler
+      );
+
+    } catch (error) {
+
+      console.warn(
+        "Old handler remove error:",
+        error
+      );
+
+    }
+  }
+
+  // New handler
+  messageHandler =
+    async (event) => {
+
+      try {
+
+        await handleIncomingMessage(
+          event
+        );
+
+      } catch (error) {
+
+        console.error(
+          "Message handler error:",
+          error
+        );
+
+        log(
+          "خطای Listener: " +
+            error.message,
+          "error"
+        );
+      }
+    };
+
+  client.addEventHandler(
+    messageHandler,
+    new NewMessage({})
+  );
+
+  log(
+    "Listener تلگرام فعال شد.",
+    "success"
+  );
+}
+
+// ======================================================
+// INCOMING MESSAGE
+// ======================================================
+
+async function handleIncomingMessage(
+  event
+) {
+
+  if (
+    !event ||
+    !event.message
+  ) {
+    return;
+  }
+
+  const message =
+    event.message;
+
+  const text =
+    (
+      message.message ||
+      ""
+    ).trim();
+
+  if (!text) {
+    return;
+  }
+
+  const chat =
+    await message.getChat();
+
+  if (!chat) {
+    return;
+  }
+
+  // ====================================================
+  // SAVED MESSAGES
+  // ====================================================
+
+  if (
+    await isSavedMessages(
+      message
+    )
+  ) {
+
+    console.log(
+      "Saved Message:",
+      text
+    );
+
+    // .list
+    if (
+      text.toLowerCase() ===
+      ".list"
+    ) {
+
+      await sendScheduleList();
+
+      return;
+    }
+
+    // .stopall
+    if (
+      text.toLowerCase() ===
+      ".stopall"
+    ) {
+
+      await stopAllSchedules();
+
+      await client.sendMessage(
+        "me",
+        {
+          message:
+            "🛑 تمام زمان‌بندی‌ها متوقف شدند."
+        }
+      );
+
+      return;
+    }
+
+    return;
+  }
+
+  // ====================================================
+  // GROUP
+  // ====================================================
+
+  if (
+    !isGroupChat(chat)
+  ) {
+    return;
+  }
+
+  // ====================================================
+  // PARSE COMMAND
+  // ====================================================
+
+  const parsed =
+    parseCommand(text);
+
+  if (!parsed) {
+    return;
+  }
+
+  const chatId =
+    String(chat.id);
+
+  const title =
+    getChatTitle(chat);
+
+  // ====================================================
+  // OFF
+  // ====================================================
+
+  if (
+    parsed.action === "off"
+  ) {
+
+    stopTimer(chatId);
+
+    removeSchedule(chatId);
+
+    await client.sendMessage(
+      chat,
+      {
+        message:
+          "🛑 ارسال خودکار برای این گروه متوقف شد."
+      }
+    );
+
+    log(
+      `زمان‌بندی گروه "${title}" متوقف شد.`,
+      "success"
+    );
+
+    return;
+  }
+
+  // ====================================================
+  // ON / EDIT
+  // ====================================================
+
+  if (
+    parsed.action === "on" ||
+    parsed.action === "edit"
+  ) {
+
+    // Stop previous timer
+    stopTimer(chatId);
+
+    const schedule = {
+
+      chatId,
+
+      title,
+
+      text:
+        parsed.text,
+
+      minutes:
+        parsed.minutes,
+
+      intervalMs:
+        parsed.minutes *
+        60 *
+        1000,
+
+      active: true,
+
+      createdAt:
+        Date.now()
+    };
+
+    // Group link
+    try {
+
+      if (
+        chat.username
+      ) {
+
+        schedule.link =
+          "https://t.me/" +
+          chat.username;
+      }
+
+    } catch {}
+
+    // Save
+    setSchedule(
+      chatId,
+      schedule
+    );
+
+    // Start
+    startTimer(
+      chatId,
+      schedule
+    );
+
+    // Confirmation
+    await client.sendMessage(
+      chat,
+      {
+        message:
+          `✅ زمان‌بندی ${
+            parsed.action === "edit"
+              ? "ویرایش"
+              : "فعال"
+          } شد.\n\n` +
+          `📝 متن: ${parsed.text}\n` +
+          `⏱ فاصله: ${parsed.minutes} دقیقه`
+      }
+    );
+
+    log(
+      `زمان‌بندی "${title}" فعال شد.`,
+      "success"
+    );
+
+    return;
+  }
+}
+
+// ======================================================
+// COMMAND PARSER
+// ======================================================
+
+function parseCommand(text) {
+
+  // ----------------------------------------------------
+  // WORD OFF
+  // ----------------------------------------------------
+
+  if (
+    /^word\s+off$/i.test(text)
+  ) {
+
+    return {
+      action: "off"
+    };
+  }
+
+  // ----------------------------------------------------
+  // WORD=TEXT TIME=NUMBER ON/EDIT
+  // ----------------------------------------------------
+
+  const match =
+    text.match(
+      /^word=(.+?)\s+time=(\d+(?:\.\d+)?)\s+(on|edit)$/i
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const word =
+    match[1].trim();
+
+  const minutes =
+    Number(match[2]);
+
+  const action =
+    match[3].toLowerCase();
+
+  if (!word) {
+    return null;
+  }
+
+  if (
+    !Number.isFinite(minutes) ||
+    minutes <= 0
+  ) {
+
+    return null;
+  }
+
+  return {
+
+    text:
+      word,
+
+    minutes:
+      minutes,
+
+    action:
+      action
+  };
+}
+
+// ======================================================
+// TIMER
+// ======================================================
+
+function startTimer(
+  chatId,
+  schedule
+) {
+
+  // Stop old timer
+  stopTimer(chatId);
+
+  const interval =
+    Number(
+      schedule.intervalMs
+    );
+
+  if (
+    !Number.isFinite(interval) ||
+    interval <= 0
+  ) {
+
+    console.error(
+      "Invalid interval:",
+      interval
+    );
+
+    return;
+  }
+
+  const timer =
+    setInterval(
+      async () => {
+
+        try {
+
+          if (!client) {
+            return;
+          }
+
+          // Reconnect
+          if (
+            !client.connected
+          ) {
+
+            try {
+
+              await client.connect();
+
+            } catch (error) {
+
+              console.error(
+                "Reconnect error:",
+                error
+              );
+
+              return;
+            }
+          }
+
+          // Check schedule still exists
+          const current =
+            getSchedule(
+              chatId
+            );
+
+          if (
+            !current ||
+            current.active !== true
+          ) {
+
+            stopTimer(chatId);
+
+            return;
+          }
+
+          // Send
+          await client.sendMessage(
+            Number(chatId),
+            {
+              message:
+                current.text
+            }
+          );
+
+          console.log(
+            "Scheduled message sent:",
+            chatId,
+            current.text
+          );
+
+        } catch (error) {
+
+          console.error(
+            "Timer send error:",
+            error
+          );
+        }
+
+      },
+      interval
+    );
+
+  timers.set(
+    String(chatId),
+    timer
+  );
+
+  console.log(
+    `Timer started: ${chatId}`
+  );
+}
+
+// ======================================================
+// STOP TIMER
+// ======================================================
+
+function stopTimer(chatId) {
+
+  const key =
+    String(chatId);
+
+  const timer =
+    timers.get(key);
+
+  if (timer) {
+
+    clearInterval(timer);
+
+    timers.delete(key);
+
+    console.log(
+      "Timer stopped:",
+      key
+    );
+  }
+}
+
+// ======================================================
+// RESTORE SCHEDULES
+// ======================================================
+
+async function restoreSchedules() {
+
+  const schedules =
+    loadSchedules();
+
+  const ids =
+    Object.keys(
+      schedules
+    );
+
+  if (ids.length === 0) {
+
+    log(
+      "هیچ زمان‌بندی ذخیره‌شده‌ای وجود ندارد."
+    );
+
+    return;
+  }
+
+  for (
+    const chatId of ids
+  ) {
+
+    const schedule =
+      schedules[chatId];
+
+    if (
+      !schedule ||
+      schedule.active !== true
+    ) {
+      continue;
+    }
+
+    if (
+      !schedule.text ||
+      !schedule.minutes
+    ) {
+      continue;
+    }
+
+    schedule.intervalMs =
+      Number(
+        schedule.minutes
+      ) *
+      60 *
+      1000;
+
+    startTimer(
+      chatId,
+      schedule
+    );
+  }
+
+  log(
+    `${ids.length} زمان‌بندی بررسی و بازیابی شد.`,
+    "success"
+  );
+}
+
+// ======================================================
+// LIST
+// ======================================================
+
+async function sendScheduleList() {
+
+  if (!client) {
+    return;
+  }
+
+  const schedules =
+    loadSchedules();
+
+  const active =
+    Object.values(
+      schedules
+    ).filter(
+      (item) =>
+        item &&
+        item.active === true
+    );
+
+  // No schedules
+  if (
+    active.length === 0
+  ) {
+
+    await client.sendMessage(
+      "me",
+      {
+        message:
+          "📋 هیچ زمان‌بندی فعالی وجود ندارد."
+      }
+    );
+
+    return;
+  }
+
+  let output =
+    "📋 زمان‌بندی‌های فعال\n\n";
+
+  let index = 1;
+
+  for (
+    const schedule of active
+  ) {
+
+    let link =
+      schedule.link || "";
+
+    try {
+
+      const entity =
+        await client.getEntity(
+          Number(
+            schedule.chatId
+          )
+        );
+
+      if (
+        entity?.username
+      ) {
+
+        link =
+          "https://t.me/" +
+          entity.username;
+      }
+
+      if (
+        entity?.title
+      ) {
+
+        schedule.title =
+          entity.title;
+      }
+
+      schedule.link =
+        link;
+
+      setSchedule(
+        schedule.chatId,
+        schedule
+      );
+
+    } catch (error) {
+
+      console.warn(
+        "Entity refresh error:",
+        error
+      );
+    }
+
+    output +=
+      `${index}. ${
+        schedule.title ||
+        "گروه"
+      }\n`;
+
+    output +=
+      `📝 متن: ${
+        schedule.text
+      }\n`;
+
+    output +=
+      `⏱ هر ${
+        schedule.minutes
+      } دقیقه\n`;
+
+    output +=
+      `🆔 ${
+        schedule.chatId
+      }\n`;
+
+    if (link) {
+
+      output +=
+        `🔗 ${link}\n`;
+    }
+
+    output += "\n";
+
+    index++;
+  }
+
+  await client.sendMessage(
+    "me",
+    {
+      message:
+        output.trim()
+    }
+  );
+}
+
+// ======================================================
+// STOP ALL
+// ======================================================
+
+async function stopAllSchedules() {
+
+  const schedules =
+    loadSchedules();
+
+  for (
+    const chatId of
+    Object.keys(schedules)
+  ) {
+
+    stopTimer(chatId);
+  }
+
+  localStorage.removeItem(
+    STORAGE.schedules
+  );
+
+  log(
+    "تمام زمان‌بندی‌ها متوقف شدند.",
+    "success"
+  );
+}
+
+// ======================================================
+// ACTIVATION MESSAGE
+// ======================================================
+
+async function sendActivationMessage() {
+
+  try {
+
+    await client.sendMessage(
+      "me",
+      {
+        message:
+`🟢 Userbot فعال شد.
+
+دستورهای قابل استفاده:
+
+📌 فعال کردن:
+word=میو time=4 on
+
+📌 تغییر:
+word=هی time=2 edit
+
+📌 توقف:
+Word off
+
+📌 مشاهده لیست:
+.list
+
+📌 توقف همه:
+.stopall
+
+⏱ زمان‌ها بر اساس دقیقه هستند.
+
+⚠️ صفحه Userbot باید باز و اتصال تلگرام فعال باشد.`
+      }
+    );
+
+  } catch (error) {
+
+    console.error(
+      "Activation message error:",
+      error
+    );
+  }
+}
+
+// ======================================================
+// LOGOUT
 // ======================================================
 
 async function logoutTelegram() {
 
   try {
 
-    log(
-      "در حال خروج..."
-    );
+    // Stop timers
+    for (
+      const chatId of
+      timers.keys()
+    ) {
 
+      stopTimer(chatId);
+    }
+
+    // Disconnect
     if (client) {
 
       try {
+
         await client.disconnect();
+
       } catch {}
 
       client = null;
     }
 
     currentUser = null;
+
+    messageHandler = null;
 
     localStorage.removeItem(
       STORAGE.session
@@ -518,12 +1436,11 @@ async function logoutTelegram() {
         error.message,
       "error"
     );
-
   }
 }
 
 // ======================================================
-// Event Listeners
+// BUTTON EVENTS
 // ======================================================
 
 if (loginBtn) {
@@ -535,21 +1452,14 @@ if (loginBtn) {
       event.preventDefault();
 
       await loginTelegram();
-
     }
-  );
-
-  log(
-    "دکمه ورود آماده است.",
-    "success"
   );
 
 } else {
 
   console.error(
-    "ERROR: loginBtn does not exist."
+    "loginBtn not found!"
   );
-
 }
 
 if (logoutBtn) {
@@ -561,14 +1471,12 @@ if (logoutBtn) {
       event.preventDefault();
 
       await logoutTelegram();
-
     }
   );
-
 }
 
 // ======================================================
-// Global Error Handler
+// GLOBAL ERRORS
 // ======================================================
 
 window.addEventListener(
@@ -576,7 +1484,7 @@ window.addEventListener(
   (event) => {
 
     console.error(
-      "GLOBAL ERROR:",
+      "Global JS Error:",
       event.error
     );
 
@@ -588,7 +1496,6 @@ window.addEventListener(
         ),
       "error"
     );
-
   }
 );
 
@@ -597,7 +1504,7 @@ window.addEventListener(
   (event) => {
 
     console.error(
-      "PROMISE ERROR:",
+      "Unhandled Promise:",
       event.reason
     );
 
@@ -609,16 +1516,19 @@ window.addEventListener(
         ),
       "error"
     );
-
   }
 );
 
 // ======================================================
-// Start
+// INITIAL
 // ======================================================
 
 loadInputs();
 
 log(
   "Userbot آماده است."
+);
+
+console.log(
+  "Telegram MTProto Userbot loaded."
 );
